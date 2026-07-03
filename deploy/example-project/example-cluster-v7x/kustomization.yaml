@@ -1,0 +1,10 @@
+namespace: tpu-provisioner-system
+resources:
+- ../../../config/default-slice
+
+patches:
+- path: configmap-patch.yaml
+- path: deployment-patch.yaml
+- path: serviceaccount-patch.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
