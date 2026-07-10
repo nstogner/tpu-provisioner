@@ -12,6 +12,15 @@ Node Pools are cleaned up when the JobSet whose pods triggered the node pool cre
 
 ## Setup
 
+### Export the Environment Variables
+```bash
+GCP_PROJECT_ID=your-project \
+GCP_CLUSTER_LOCATION=your-cluster-region \
+GCP_ZONE=your-tpu-zone \
+GCP_CLUSTER=your-cluster \
+GCP_NODE_SERVICE_ACCOUNT=YOUR_PROJECT_NUMBER-compute@developer.gserviceaccount.com
+```
+
 ### Create a GKE Cluster with workload identity enabled and no release channel
 
 The TPU Provisioner requires [Workload Identity for GKE](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) to be enabled, and cannot be on a release channel (auto upgrades
@@ -26,7 +35,7 @@ then click on your cluster to pull up settings that can be configured. Find the 
 edit button and select `No channel`.
 
 Also note, if you plan to [preload container images via secondary boot disks](https://cloud.google.com/kubernetes-engine/docs/how-to/data-container-image-preloading#create-cluster-secondary-disk) to reduce pod startup latency, you'll
-need to enable image streaming, as described in the linked docs.
+need to set the `ENABLE_IMAGE_STREAMING` configuration to `true` in the TPU Provisioner environment. If `ENABLE_IMAGE_STREAMING` is `false`, any provided secondary boot disk configuration will be ignored and a warning will be logged. Setting `ENABLE_IMAGE_STREAMING` to `true` also enables `GcfsConfig` on the provisioned GKE node pools, while setting it to `false` explicitly disables it to override cluster-wide defaults.
 
 ### Install JobSet
 
@@ -47,13 +56,15 @@ k8s service account `tpu-provisioner-controller-manageer` to authenticate with W
 
 ```sh
 gcloud iam service-accounts create tpu-provisioner
-export PROVISIONER_SERVICE_ACCOUNT=tpu-provisioner@${PROJECT_ID}.iam.gserviceaccount.com
+export PROVISIONER_SERVICE_ACCOUNT=tpu-provisioner@${GCP_PROJECT_ID}.iam.gserviceaccount.com
 ```
 
-Give the Service Accounts permissions to administer GKE clusters.
+Give the Service Account permissions to administer GKE clusters, and write metrics.
 
 ```bash
-gcloud projects add-iam-policy-binding $PROJECT_ID --member="serviceAccount:${PROVISIONER_SERVICE_ACCOUNT}" --role='roles/container.clusterAdmin'
+gcloud projects add-iam-policy-binding $GCP_PROJECT_ID --member="serviceAccount:${PROVISIONER_SERVICE_ACCOUNT}" --role='roles/container.clusterAdmin'
+gcloud projects add-iam-policy-binding $GCP_PROJECT_ID --member="serviceAccount:${PROVISIONER_SERVICE_ACCOUNT}" --role='roles/logging.logWriter'
+gcloud projects add-iam-policy-binding $GCP_PROJECT_ID --member="serviceAccount:${PROVISIONER_SERVICE_ACCOUNT}" --role='roles/monitoring.metricWriter'
 ```
 
 Bind the GCP Service Account to the Kubernetes Service Account that will be attached to the controller Pod.
@@ -61,14 +72,14 @@ Bind the GCP Service Account to the Kubernetes Service Account that will be atta
 ```sh
 gcloud iam service-accounts add-iam-policy-binding ${PROVISIONER_SERVICE_ACCOUNT} \
     --role roles/iam.workloadIdentityUser \
-    --member "serviceAccount:${PROJECT_ID}.svc.id.goog[tpu-provisioner-system/tpu-provisioner-controller-manager]"
+    --member "serviceAccount:${GCP_PROJECT_ID}.svc.id.goog[tpu-provisioner-system/tpu-provisioner-controller-manager]"
 ```
 
 The tpu-provisioner service account will also need `iam.serviceAccountUser` on the service account to be used by the nodes in the nodepool:
 
 ```sh
 
-gcloud iam service-accounts add-iam-policy-binding ${NODE_SERVICE_ACCOUNT} \
+gcloud iam service-accounts add-iam-policy-binding ${GCP_NODE_SERVICE_ACCOUNT} \
     --member="serviceAccount:${PROVISIONER_SERVICE_ACCOUNT}" \
     --role="roles/iam.serviceAccountUser" \
     --project=${PROJECT_ID}
@@ -79,25 +90,32 @@ gcloud iam service-accounts add-iam-policy-binding ${NODE_SERVICE_ACCOUNT} \
 TPU Provisioner deployment configurations are defined on a per cluster level, using config files which live in
 a directory structure like follows:
 
-`${REPO_ROOT}/deploy/${PROJECT_ID}/${CLUSTER_NAME}`
+`${REPO_ROOT}/deploy/${GCP_PROJECT_ID}/${GCP_CLUSTER}`
 
-You will need to create the `deploy/${PROJECT_ID}/${CLUSTER_NAME}` directory for each you cluster you deploy
+You will need to create the `deploy/${GCP_PROJECT_ID}/${GCP_CLUSTER}` directory for each cluster you deploy
 the provisioner on.
 
-Next, copy the files from `deploy/example-project/example-cluster` into your new `deploy/${PROJECT_ID}/${CLUSTER_NAME}`
-directory and update the templated values in the yaml files to match your own.
+Next, copy the files from `deploy/example-project/example-cluster-v5p` for `v5p`tpu type or `deploy/example-project/example-cluster-v7x` for `v7x` tpu type into your new `deploy/${PROJECT_ID}/${CLUSTER_NAME}` directory.
+
+For `v6e` use the same Templates for `v5p`
+
+Update the templated values in the .yaml files to match your own.
+
+### OpenTelemetry (OTel) Collector Sidecar
+
+The TPU Provisioner includes an OpenTelemetry (OTel) Collector sidecar in the controller Pod to scrape `controller-runtime` and workqueue metrics from the controller.
+
+* Filters on specific `controller_runtime` metrics and `workqueue` metrics
+* Appends a `tpu.provisioner.` prefix, and exports them directly to Google Managed Service for Prometheus (GMP).
+* Permissions: Metric collection and logging exports to function, the controller's GCP service account must be granted the `roles/monitoring.metricWriter` and `roles/logging.logWriter` IAM roles
+* Configuration in `collector-config` ConfigMap in `config/manager/collector-config.yaml`.
 
 ### Building and Deploying the Controller
 
-Build and push your image. For example:
+Build and push your image:
 
 ```bash
-export PROJECT_ID=example-project
-export CLUSTER_NAME=example-cluster
-```
-
-```bash
-export CONTAINER_IMAGE=us-docker.pkg.dev/${PROJECT_ID}/default/tpu-provisioner:$(git rev-parse --short HEAD)
+export CONTAINER_IMAGE=us-docker.pkg.dev/${GCP_PROJECT_ID}/default/tpu-provisioner:$(git rev-parse --short HEAD)
 make docker-build docker-push IMG=${CONTAINER_IMAGE}
 ```
 
@@ -111,17 +129,17 @@ gcloud builds submit --tag $CONTAINER_IMAGE --project=$PROJECT_ID .
 Set the container image in the manifests.
 
 ```bash
-cd ./deploy/${PROJECT_ID}/${CLUSTER_NAME}
+cd ./deploy/${GCP_PROJECT_ID}/${GCP_CLUSTER}
 kustomize edit set image controller=${CONTAINER_IMAGE}
 cd -
 ```
 
-Edit the settings in the `./deploy/${PROJECT_ID}/${CLUSTER_NAME}/` directory to match your project (ConfigMap values and ServiceAccount annotation).
+Edit the settings in the `./deploy/${GCP_PROJECT_ID}/${GCP_CLUSTER}/` directory to match your project (ConfigMap values and ServiceAccount annotation).
 
 Deploy controller.
 
 ```sh
-kubectl apply --server-side -k ./deploy/${PROJECT_ID}/${CLUSTER_NAME}
+kubectl apply --server-side -k ./deploy/${GCP_PROJECT_ID}/${GCP_CLUSTER}
 ```
 
 
@@ -157,21 +175,16 @@ For local development and quick manual testing, you can do the following:
 
 Note you’ll need a Kubernetes cluster to run against.
 
-Impersonate the Service Account created above, for example:
+Impersonate the Service Account created above:
 
 ```bash
-# Assuming you have PROJECT_ID set in your environment...
+# Assuming you have GCP_PROJECT_ID set in your environment...
 gcloud config set auth/impersonate_service_account ${PROVISIONER_SERVICE_ACCOUNT}
 ```
 
-Run the controller (this will run in the foreground, so switch to a new terminal if you want to leave it running), for example:
+Run the controller (this will run in the foreground, so switch to a new terminal if you want to leave it running):
 
 ```bash
-GCP_PROJECT_ID=your-project \
-GCP_CLUSTER_LOCATION=your-cluster-region \
-GCP_ZONE=your-tpu-zone \
-GCP_CLUSTER=your-cluster \
-GCP_NODE_SERVICE_ACCOUNT=YOUR_PROJECT_NUMBER-compute@developer.gserviceaccount.com \
 make run
 ```
 
@@ -180,7 +193,7 @@ make run
 Test that you can apply a TPU Job.
 
 ```bash
-kubectl apply -f ./examples/v4-2x2x4/
+kubectl apply -f ./examples/ironwood-jobset-32.yaml/
 ```
 
 ### Ironwood / tpu7x support
@@ -247,6 +260,9 @@ This key contains the configuration for the nodepools that will be created. The 
 
 Some configuration parameters are set via environment variables for the provisioner itself. These provide the default values for nodepools managed by the provisioner:
 
+*   `CONCURRENCY`: (Optional) The maximum number of concurrent reconcile operations for dynamic provisioning. Defaults to `3`.
+*   `BACKOFF_BASE_DELAY`: (Optional) The base delay for exponential backoff on retriable errors. Defaults to `5s`.
+*   `BACKOFF_MAX_DELAY`: (Optional) The maximum delay for exponential backoff on retriable errors. Defaults to `5m`.
 *   `GKE_MAX_PODS_PER_NODE`: (Optional) The maximum number of pods that can run on a node. Defaults to `15`. 
     *   For **dynamic nodepools**, this is used for all provisioned node pools.
     *   For **static nodepools**, this is the default value if `maxPodsPerNode` is not specified in the 
@@ -254,10 +270,16 @@ Some configuration parameters are set via environment variables for the provisio
     
     In GKE, the system default is 110. For large clusters, using the default of 110 can result in quickly exceeding the available IP space in the cluster's pod IP range. Setting a lower value like the `tpu-provisioner` default of 15 is recommended for TPU-intensive workloads where each node typically only runs a single large pod.
 
+*   `ENABLE_IMAGE_STREAMING`: (Optional) Whether to enable GKE Image Streaming (`GcfsConfig`) on dynamic and static node pools. Defaults to `false`.
+    *   If `true`, `GcfsConfig.Enabled` is set to `true` on the node pools, and any configured `GCP_NODE_SECONDARY_DISK` (secondary boot disk) is populated.
+    *   If `false`, `GcfsConfig.Enabled` is explicitly set to `false` and `GCP_NODE_SECONDARY_DISK` if present is ignored (with a logged warning).
+
 Some configuration parameters come from environment variables rather than the configmap, particularly those that are shared across both statically and dynamically created nodepools managed by the provisioner. This includes the following environment variables typically set in the manager configmap (note that the `STATIC_NODEPOOL_CREATE_CONCURRENCY` environment variable is distinct from the `CONCURRENCY` environment variable to allow for separate nodepool create operation limits between static and dynamic nodepools):
 
 ```bash
 STATIC_NODEPOOL_CREATE_CONCURRENCY: "3"
+BACKOFF_BASE_DELAY: "5s"
+BACKOFF_MAX_DELAY: "5m"
 GCP_PROJECT_ID: my-project
 GCP_CLUSTER_LOCATION: us-central1
 GCP_ZONE: us-central1-c
@@ -266,6 +288,7 @@ GCP_NODE_ADDITIONAL_NETWORKS: test-network:test-subnet
 GCP_NODE_TAGS: test-tag
 GCP_NODE_SERVICE_ACCOUNT: my-service-account-email
 GKE_MAX_PODS_PER_NODE: "15"
+ENABLE_IMAGE_STREAMING: "false"
 ```
 
 Nodepools created by the static provisioner are labeled with `tpu-provisioner-static-nodepool` in order to ensure that their lifecycle is managed independently of dynamic nodepools. Nodepools with this label are omitted from the standard garbage collection loop used for dynamically-provisioned nodepools, and are instead cleaned up when their corresponding subblock, block, or reservation specifications are removed from the configmap.

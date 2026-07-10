@@ -195,6 +195,7 @@ func main() {
 			"nodeTags", cfg.GCPNodeTags,
 			"podToNodeLabels", cfg.GCPPodToNodeLabels,
 			"maxPodsPerNode", cfg.GKEMaxPodsPerNode,
+			"enableImageStreaming", cfg.EnableImageStreaming,
 		)
 
 		clusterCtx := cloud.GKEContext{
@@ -213,6 +214,7 @@ func main() {
 			NodeSecureBoot:          cfg.GCPNodeSecureBoot,
 			ForceOnDemand:           cfg.GCPForceOnDemand,
 			MaxPodsPerNode:          cfg.GKEMaxPodsPerNode,
+			EnableImageStreaming:    cfg.EnableImageStreaming,
 		}
 
 		containers, err := containerv1beta1.NewService(context.Background() /*, option.WithCredentials(creds)*/)
@@ -275,7 +277,9 @@ func main() {
 		PodCriteria: controller.PodCriteria{
 			ResourceType: cfg.PodResourceType,
 		},
-		Concurrency: cfg.Concurrency,
+		Concurrency:      cfg.Concurrency,
+		BackoffBaseDelay: cfg.BackoffBaseDelay,
+		BackoffMaxDelay:  cfg.BackoffMaxDelay,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "CreationReconciler")
 		os.Exit(1)
@@ -290,7 +294,9 @@ func main() {
 			MinLifetime:       cfg.NodeMinLifespan,
 			PoolDeletionDelay: cfg.NodepoolDeletionDelay,
 		},
-		Concurrency: cfg.Concurrency,
+		Concurrency:      cfg.Concurrency,
+		BackoffBaseDelay: cfg.BackoffBaseDelay,
+		BackoffMaxDelay:  cfg.BackoffMaxDelay,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DeletionReconciler")
 		os.Exit(1)

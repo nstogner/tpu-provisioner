@@ -49,6 +49,9 @@ type Config struct {
 	// GKEMaxPodsPerNode sets the max pods per node in provisioned node pools
 	GKEMaxPodsPerNode int `envconfig:"GKE_MAX_PODS_PER_NODE" default:"16"`
 
+	// EnableImageStreaming enables image streaming on GKE node pools
+	EnableImageStreaming bool `envconfig:"ENABLE_IMAGE_STREAMING" default:"false"`
+
 	// NodeMinLifespan is the amount of time that should pass between a Node object
 	// creation and a cleanup of that Node. This is mostly irrelevant now that JobSet
 	// existance is checked before deleting a NodePool.
@@ -59,6 +62,9 @@ type Config struct {
 	PodResourceType string `envconfig:"POD_RESOURCE_TYPE" default:"google.com/tpu"`
 
 	Concurrency int `envconfig:"CONCURRENCY" default:"3"`
+
+	BackoffBaseDelay time.Duration `envconfig:"BACKOFF_BASE_DELAY" default:"5s"`
+	BackoffMaxDelay  time.Duration `envconfig:"BACKOFF_MAX_DELAY" default:"5m"`
 
 	StaticNodepoolCreateConcurrency int           `envconfig:"STATIC_NODEPOOL_CREATE_CONCURRENCY" default:"3"`
 	StaticNodepoolCreateTimeout     time.Duration `envconfig:"STATIC_NODEPOOL_CREATE_TIMEOUT" default:"10m"`
