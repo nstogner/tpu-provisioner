@@ -81,6 +81,12 @@ type Config struct {
 	// Reason ACTIVE as ready. This prevents JobSets in sync mode from being suspended when
 	// Slice readiness is temporarily Unknown.
 	SliceTreatUnknownActiveAsReady bool `envconfig:"SLICE_TREAT_UNKNOWN_ACTIVE_AS_READY" default:"false"`
+
+	// EnableNodePoolReuse enables reservation- and cell-aware dynamic GKE NodePool reuse.
+	EnableNodePoolReuse bool `envconfig:"ENABLE_NODEPOOL_REUSE" default:"false"`
+
+	// CapacityConfigPath specifies the path to a YAML file configuring reservation and cell chip capacities.
+	CapacityConfigPath string `envconfig:"CAPACITY_CONFIG_PATH" default:""`
 }
 
 func ParseEnv() (Config, error) {

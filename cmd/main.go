@@ -38,6 +38,7 @@ import (
 	"cloud.google.com/go/compute/metadata"
 	"github.com/GoogleCloudPlatform/ai-on-gke/tpu-provisioner/internal/cloud"
 	"github.com/GoogleCloudPlatform/ai-on-gke/tpu-provisioner/internal/controller"
+	"github.com/GoogleCloudPlatform/ai-on-gke/tpu-provisioner/internal/reuse"
 	jobwebhook "github.com/GoogleCloudPlatform/ai-on-gke/tpu-provisioner/internal/webhook"
 
 	containerv1beta1 "google.golang.org/api/container/v1beta1"
@@ -108,7 +109,7 @@ func main() {
 	}
 
 	var webhookServer webhook.Server
-	if enableWebhooks {
+	if enableWebhooks || cfg.EnableNodePoolReuse {
 		webhookServer = webhook.NewServer(
 			webhook.Options{
 				Port:    9443,
@@ -328,6 +329,29 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	capBook, err := reuse.LoadCapacityConfigFile(cfg.CapacityConfigPath)
+	if err != nil {
+		setupLog.Error(err, "unable to load CAPACITY_CONFIG_PATH", "path", cfg.CapacityConfigPath)
+		os.Exit(1)
+	}
+	reuseBackend, err := cloud.NewReusePoolBackend(provider)
+	if err != nil {
+		setupLog.Error(err, "unable to initialize reuse pool backend")
+		os.Exit(1)
+	}
+	if err := reuse.NewReuseReconciler(
+		mgr.GetClient(),
+		mgr.GetAPIReader(),
+		mgr.GetScheme(),
+		mgr.GetEventRecorderFor("tpu-provisioner"),
+		reuseBackend,
+		capBook,
+		cfg.EnableNodePoolReuse,
+	).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ReuseReconciler")
+		os.Exit(1)
+	}
+
 	if enableWebhooks {
 		// Register webhook handlers
 		jobWebhook := &jobwebhook.LoggingHandler{
@@ -346,6 +370,26 @@ func main() {
 			},
 		}
 		mgr.GetWebhookServer().Register("/mutate-lws", &webhook.Admission{Handler: lwsWebhook})
+	}
+	if enableWebhooks || cfg.EnableNodePoolReuse {
+		reuseJobSetWebhook := &jobwebhook.LoggingHandler{
+			Name: "reuse-jobset",
+			Handler: &reuse.ReuseJobSetMutator{
+				Decoder:             admission.NewDecoder(scheme),
+				EnableNodePoolReuse: cfg.EnableNodePoolReuse,
+				ForceOnDemand:       cfg.GCPForceOnDemand,
+			},
+		}
+		mgr.GetWebhookServer().Register("/mutate-reuse-jobset", &webhook.Admission{Handler: reuseJobSetWebhook})
+
+		reuseJobWebhook := &jobwebhook.LoggingHandler{
+			Name: "reuse-job",
+			Handler: &reuse.ReuseJobMutator{
+				Client:  mgr.GetClient(),
+				Decoder: admission.NewDecoder(scheme),
+			},
+		}
+		mgr.GetWebhookServer().Register("/mutate-reuse-job", &webhook.Admission{Handler: reuseJobWebhook})
 	}
 
 	//+kubebuilder:scaffold:builder

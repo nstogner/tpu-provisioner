@@ -82,6 +82,60 @@ webhooks:
       path: /mutate-lws
       port: 9443
 ---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: tpu-provisioner-reuse
+  annotations:
+    cert-manager.io/inject-ca-from: tpu-provisioner-system/tpu-provisioner-webhook-server
+webhooks:
+- name: reuse-jobsets.tpu-provisioner-system.svc
+  matchPolicy: Equivalent
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  rules:
+  - operations: ["CREATE"]
+    apiGroups: ["jobset.x-k8s.io"]
+    apiVersions: ["v1alpha2"]
+    resources: ["jobsets"]
+    scope: "Namespaced"
+  objectSelector:
+    matchExpressions:
+    - key: tpu-provisioner.cloud.google.com/nodepool-reuse
+      operator: NotIn
+      values: ["false"]
+  failurePolicy: Fail
+  timeoutSeconds: 20
+  clientConfig:
+    service:
+      namespace: system
+      name: tpu-provisioner-webhook-server
+      path: /mutate-reuse-jobset
+      port: 9443
+- name: reuse-jobs.tpu-provisioner-system.svc
+  matchPolicy: Equivalent
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  reinvocationPolicy: IfNeeded
+  rules:
+  - operations: ["CREATE"]
+    apiGroups: ["batch"]
+    apiVersions: ["v1"]
+    resources: ["jobs"]
+    scope: "Namespaced"
+  objectSelector:
+    matchExpressions:
+    - key: jobset.sigs.k8s.io/job-key
+      operator: Exists
+  failurePolicy: Fail
+  timeoutSeconds: 20
+  clientConfig:
+    service:
+      namespace: system
+      name: tpu-provisioner-webhook-server
+      path: /mutate-reuse-job
+      port: 9443
+---
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:

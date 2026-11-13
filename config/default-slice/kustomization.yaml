@@ -46,3 +46,28 @@ patchesJson6902:
         - watch
         - patch
         - update
+    - op: add
+      path: /rules/-
+      value:
+        apiGroups:
+        - batch
+        resources:
+        - jobs
+        verbs:
+        - get
+        - list
+        - watch
+        - patch
+        - update
+        - delete
+    - op: add
+      path: /rules/-
+      value:
+        apiGroups:
+        - scheduling.k8s.io
+        resources:
+        - priorityclasses
+        verbs:
+        - get
+        - list
+        - watch

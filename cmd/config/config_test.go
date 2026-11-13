@@ -65,6 +65,8 @@ func TestParseEnv(t *testing.T) {
 				"BACKOFF_MAX_DELAY":                   "10m",
 				"ENABLE_IMAGE_STREAMING":              "true",
 				"SLICE_TREAT_UNKNOWN_ACTIVE_AS_READY": "true",
+				"ENABLE_NODEPOOL_REUSE":               "true",
+				"CAPACITY_CONFIG_PATH":                "/etc/tpu-provisioner/capacity.yaml",
 			},
 			want: Config{
 				Provider:                        "mock",
@@ -85,6 +87,8 @@ func TestParseEnv(t *testing.T) {
 				StaticNodepoolDeleteConcurrency: 3,
 				SliceConditionalRecreateWait:    60 * time.Second,
 				SliceTreatUnknownActiveAsReady:  true,
+				EnableNodePoolReuse:             true,
+				CapacityConfigPath:              "/etc/tpu-provisioner/capacity.yaml",
 			},
 			wantErr: false,
 		},
